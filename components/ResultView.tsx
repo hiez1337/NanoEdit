@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { ArrowLeft, Download, Maximize2, Split } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { ArrowLeft, Download, Maximize2, Split, GitCompare } from 'lucide-react';
 import Button from './Button';
 import { UploadedImage } from '../types';
 import { useTranslation } from '../contexts/LanguageContext';
@@ -19,9 +19,51 @@ const ResultView: React.FC<ResultViewProps> = ({
   onReset, 
   onDownload 
 }) => {
-  const [viewMode, setViewMode] = useState<'side-by-side' | 'toggle'>('side-by-side');
+  const [viewMode, setViewMode] = useState<'side-by-side' | 'toggle' | 'slider'>('slider');
   const [showOriginal, setShowOriginal] = useState(false);
+  const [sliderPosition, setSliderPosition] = useState(50);
+  const sliderContainerRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const { t } = useTranslation();
+
+  // Slider Logic
+  const handleMove = useCallback((clientX: number) => {
+    if (!sliderContainerRef.current) return;
+    const rect = sliderContainerRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
+    const percent = (x / rect.width) * 100;
+    setSliderPosition(percent);
+  }, []);
+
+  const onMouseDown = () => setIsDragging(true);
+  const onMouseUp = () => setIsDragging(false);
+
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (isDragging) handleMove(e.clientX);
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    handleMove(e.touches[0].clientX);
+  };
+  
+  // Click on track to jump
+  const onClickTrack = (e: React.MouseEvent) => {
+    handleMove(e.clientX);
+  };
+
+  useEffect(() => {
+    const handleGlobalMouseUp = () => setIsDragging(false);
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      if (isDragging) handleMove(e.clientX);
+    };
+
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    window.addEventListener('mousemove', handleGlobalMouseMove);
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+      window.removeEventListener('mousemove', handleGlobalMouseMove);
+    };
+  }, [isDragging, handleMove]);
 
   return (
     <div className="w-full max-w-6xl mx-auto animate-fade-in">
@@ -40,6 +82,15 @@ const ResultView: React.FC<ResultViewProps> = ({
           >
             <Split className="w-4 h-4 inline-block mr-2" />
             {t('result.sideBySide')}
+          </button>
+           <button
+            onClick={() => setViewMode('slider')}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+              viewMode === 'slider' ? 'bg-slate-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <GitCompare className="w-4 h-4 inline-block mr-2" />
+            {t('result.slider')}
           </button>
           <button
             onClick={() => setViewMode('toggle')}
@@ -60,7 +111,7 @@ const ResultView: React.FC<ResultViewProps> = ({
       {/* Image Display */}
       <div className="bg-slate-800/50 rounded-2xl p-4 sm:p-8 border border-slate-700/50 backdrop-blur-sm">
         
-        {viewMode === 'side-by-side' ? (
+        {viewMode === 'side-by-side' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="space-y-3">
               <span className="text-sm font-medium text-slate-400 uppercase tracking-wider">{t('result.original')}</span>
@@ -83,7 +134,66 @@ const ResultView: React.FC<ResultViewProps> = ({
               </div>
             </div>
           </div>
-        ) : (
+        )}
+
+        {viewMode === 'slider' && (
+          <div className="relative w-full max-w-3xl mx-auto select-none">
+             <div 
+               ref={sliderContainerRef}
+               className="relative aspect-auto rounded-xl overflow-hidden bg-slate-900 border border-slate-700 shadow-2xl cursor-col-resize group"
+               onMouseDown={onMouseDown}
+               onClick={onClickTrack}
+               onTouchMove={onTouchMove}
+             >
+               {/* Background - Edited Image */}
+               <img 
+                 src={editedImageUrl} 
+                 alt="Edited" 
+                 className="w-full h-full object-contain pointer-events-none select-none"
+               />
+
+               {/* Foreground - Original Image (Clipped) */}
+               <div 
+                 className="absolute top-0 left-0 h-full overflow-hidden border-r border-white/50"
+                 style={{ width: `${sliderPosition}%` }}
+               >
+                 <img 
+                   src={originalImage.previewUrl} 
+                   alt="Original" 
+                   className="absolute top-0 left-0 max-w-none h-full object-contain pointer-events-none select-none"
+                   // We need to match the dimensions of the parent img, which is tricky in CSS alone if aspect ratio varies.
+                   // Ideally we set width: '100%' of the container width. 
+                   // But 'object-contain' complicates things if the container aspect ratio doesn't match image.
+                   // For a simple slider, let's assume the images are perfectly aligned. 
+                   // Since they are the same source dimensions, they should align if we force them to fill height/width similarly.
+                   // The best trick is to use the same width as the parent container.
+                   style={{ width: sliderContainerRef.current?.offsetWidth }}
+                 />
+               </div>
+
+               {/* Slider Handle */}
+               <div 
+                 className="absolute top-0 bottom-0 w-1 bg-white cursor-ew-resize shadow-[0_0_10px_rgba(0,0,0,0.5)] z-10"
+                 style={{ left: `${sliderPosition}%`, transform: 'translateX(-50%)' }}
+               >
+                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center text-slate-800">
+                    <GitCompare className="w-4 h-4" />
+                 </div>
+               </div>
+
+               {/* Labels */}
+               <div className="absolute top-4 left-4 bg-black/60 backdrop-blur text-white text-xs px-2 py-1 rounded pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+                  {t('result.original')}
+               </div>
+               <div className="absolute top-4 right-4 bg-primary-600/80 backdrop-blur text-white text-xs px-2 py-1 rounded pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+                  {t('result.edited')}
+               </div>
+             </div>
+             <p className="text-center text-slate-500 text-sm mt-4">{t('result.holdLabel').replace('click/press', 'drag')}</p>
+          </div>
+        )}
+
+        {viewMode === 'toggle' && (
           <div className="relative w-full max-w-3xl mx-auto">
             <div 
               className="relative aspect-auto rounded-xl overflow-hidden bg-slate-900 border border-slate-700 shadow-2xl cursor-pointer group"
